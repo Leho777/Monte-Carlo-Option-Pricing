@@ -79,9 +79,9 @@ class MonteCarloModel:
             num_paths = self.num_simulations // 2
         else:
             num_paths = self.num_simulations
+            
         for i in range(num_paths):
             # Step 1: Draw a random number between 0 and 1
-            
             u = np.random.uniform(0, 1)
             
             # Step 2: Convert it to a normal draw N(0,1) using inverse transform
@@ -96,27 +96,30 @@ class MonteCarloModel:
             # Using Black-Scholes formula: S(T) = S0 * exp((r - q - 0.5*sigma^2)*T + sigma*W(T))
             S_T = S0 * np.exp((r - q - 0.5 * sigma**2) * T + sigma * W_T)
             
-            if antithetic:
-                # Generate antithetic path
-                S_T_antithetic = S0 * np.exp((r - q - 0.5 * sigma**2) * T + sigma * (-W_T))
-                
-                # Step 5: Calculate the value of the option at T (payoff)
-                payoff_antithetic = self.option.pay_off(S_T_antithetic)
-                
-                # Step 6: Discount to today
-                discounted_payoff_antithetic = payoff_antithetic * np.exp(-r * T)
-                discounted_payoffs.append(discounted_payoff_antithetic)
-
             # Step 5: Calculate the value of the option at T (payoff)
             payoff = self.option.pay_off(S_T)
             
             # Step 6: Discount to today
             discounted_payoff = payoff * np.exp(-r * T)
-            discounted_payoffs.append(discounted_payoff)
+            
+            if antithetic:
+                # Generate antithetic path using -W_T (negatively correlated)
+                S_T_antithetic = S0 * np.exp((r - q - 0.5 * sigma**2) * T + sigma * (-W_T))
+                payoff_antithetic = self.option.pay_off(S_T_antithetic)
+                discounted_payoff_antithetic = payoff_antithetic * np.exp(-r * T)
+                
+                # KEY: Average the pair to capture variance reduction
+                # Var(avg) = (Var(Y) + Var(Y_anti) + 2*Cov(Y, Y_anti)) / 4
+                # Since Cov < 0, this reduces variance
+                paired_avg = (discounted_payoff + discounted_payoff_antithetic) / 2
+                discounted_payoffs.append(paired_avg)
+            else:
+                discounted_payoffs.append(discounted_payoff)
         
         # Step 7: Average the N results - this is the price
         price = np.mean(discounted_payoffs)
-        std_error = np.std(discounted_payoffs) / np.sqrt(self.num_simulations)
+        # Standard error based on the actual samples (paired averages if antithetic)
+        std_error = np.std(discounted_payoffs, ddof=1) / np.sqrt(len(discounted_payoffs))
         
         return {
             'price': price,
