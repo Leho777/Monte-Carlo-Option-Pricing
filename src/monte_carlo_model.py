@@ -81,11 +81,8 @@ class MonteCarloModel:
             num_paths = self.num_simulations
             
         for i in range(num_paths):
-            # Step 1: Draw a random number between 0 and 1
-            u = np.random.uniform(0, 1)
-            
-            # Step 2: Convert it to a normal draw N(0,1) using inverse transform
-            # Box-Muller transform is used internally by numpy
+            # Step 1-2: Draw a normal random variable N(0,1)
+            # (Note: We directly use standard_normal instead of uniform + inverse transform)
             Z = np.random.standard_normal()
             
             # Step 3: Convert it to a Brownian draw W(T)
@@ -125,6 +122,155 @@ class MonteCarloModel:
             'price': price,
             'std_error': std_error,
             'payoffs': discounted_payoffs
+        }
+    
+    def price_european_vectorized(self, antithetic=True) -> dict:
+        """
+        Price a European option using VECTORIZED Monte Carlo simulation
+        
+        Same algorithm as price_european but using NumPy vectorization
+        for better performance.
+        
+        Returns:
+        --------
+        dict: {'price': float, 'std_error': float, 'payoffs': ndarray}
+        """
+        # Calculate time to maturity in years
+        T = (self.option.mat_date - self.pricing_date).days / 365.0
+        
+        if T <= 0:
+            return {
+                'price': 0.0,
+                'std_error': 0.0,
+                'payoffs': np.array([])
+            }
+        
+        # Market parameters
+        S0 = self.market.underlying
+        sigma = self.market.vol
+        r = self.market.rate
+        
+        # Adjust for dividends
+        q = 0.0
+        if self.market.ex_div_date and self.market.ex_div_date < self.option.mat_date:
+            q = self.market.div_a / S0 if S0 > 0 else 0.0
+        
+        if antithetic:
+            num_paths = self.num_simulations // 2
+            
+            # Step 2: Generate all normal draws at once (vectorized)
+            Z = np.random.standard_normal(num_paths)
+            
+            # Step 3: Convert to Brownian draws W(T) ~ N(0, T)
+            W_T = Z * np.sqrt(T)
+            
+            # Step 4: Calculate all S(T) at once (vectorized)
+            drift = (r - q - 0.5 * sigma**2) * T
+            S_T = S0 * np.exp(drift + sigma * W_T)
+            S_T_antithetic = S0 * np.exp(drift + sigma * (-W_T))
+            
+            # Step 5: Calculate payoffs (vectorized)
+            # Need to handle vectorized payoff calculation
+            if self.option.is_a_call():
+                payoffs = np.maximum(S_T - self.option.strike, 0)
+                payoffs_anti = np.maximum(S_T_antithetic - self.option.strike, 0)
+            else:  # put
+                payoffs = np.maximum(self.option.strike - S_T, 0)
+                payoffs_anti = np.maximum(self.option.strike - S_T_antithetic, 0)
+            
+            # Step 6: Discount to today (vectorized)
+            discount_factor = np.exp(-r * T)
+            discounted_payoffs = payoffs * discount_factor
+            discounted_payoffs_anti = payoffs_anti * discount_factor
+            
+            # Average the pairs for variance reduction
+            paired_averages = (discounted_payoffs + discounted_payoffs_anti) / 2
+            
+            # Step 7: Calculate price and standard error
+            price = np.mean(paired_averages)
+            std_error = np.std(paired_averages, ddof=1) / np.sqrt(len(paired_averages))
+            
+            return {
+                'price': price,
+                'std_error': std_error,
+                'payoffs': paired_averages
+            }
+        else:
+            # Step 2: Generate all normal draws at once (vectorized)
+            Z = np.random.standard_normal(self.num_simulations)
+            
+            # Step 3: Convert to Brownian draws
+            W_T = Z * np.sqrt(T)
+            
+            # Step 4: Calculate all S(T) at once
+            drift = (r - q - 0.5 * sigma**2) * T
+            S_T = S0 * np.exp(drift + sigma * W_T)
+            
+            # Step 5: Calculate payoffs (vectorized)
+            if self.option.is_a_call():
+                payoffs = np.maximum(S_T - self.option.strike, 0)
+            else:  # put
+                payoffs = np.maximum(self.option.strike - S_T, 0)
+            
+            # Step 6: Discount to today
+            discount_factor = np.exp(-r * T)
+            discounted_payoffs = payoffs * discount_factor
+            
+            # Step 7: Calculate price and standard error
+            price = np.mean(discounted_payoffs)
+            std_error = np.std(discounted_payoffs, ddof=1) / np.sqrt(len(discounted_payoffs))
+            
+            return {
+                'price': price,
+                'std_error': std_error,
+                'payoffs': discounted_payoffs
+            }
+    
+    def compare_scalar_vs_vectorized(self, antithetic=True) -> dict:
+        """
+        Compare scalar and vectorized implementations to verify they give same results
+        
+        Uses the same seed for both to ensure identical random draws.
+        
+        Returns:
+        --------
+        dict with both results and comparison metrics
+        """
+        import time
+        
+        # Save current seed state
+        if self.seed is not None:
+            np.random.seed(self.seed)
+            random.seed(self.seed)
+        
+        # Time scalar version
+        start_scalar = time.time()
+        result_scalar = self.price_european(antithetic=antithetic)
+        time_scalar = time.time() - start_scalar
+        
+        # Reset seed for fair comparison
+        if self.seed is not None:
+            np.random.seed(self.seed)
+            random.seed(self.seed)
+        
+        # Time vectorized version
+        start_vector = time.time()
+        result_vector = self.price_european_vectorized(antithetic=antithetic)
+        time_vector = time.time() - start_vector
+        
+        return {
+            'scalar': {
+                'price': result_scalar['price'],
+                'std_error': result_scalar['std_error'],
+                'time': time_scalar
+            },
+            'vectorized': {
+                'price': result_vector['price'],
+                'std_error': result_vector['std_error'],
+                'time': time_vector
+            },
+            'price_difference': abs(result_scalar['price'] - result_vector['price']),
+            'speedup': time_scalar / time_vector if time_vector > 0 else float('inf')
         }
     
     def run_simulation(self, model_input):
