@@ -28,13 +28,13 @@ RATE         = 0.05      # r  (ex : 0.04 = 4 %)
 
 # Dividende discret  (mettre DIV_AMOUNT = 0 ou EX_DIV_DATE = None si absent)
 DIV_AMOUNT   = 3.0
-EX_DIV_DATE  = date(2026, 11, 30)   # None si pas de dividende
+EX_DIV_DATE  = date(2026, 10, 30)   # None si pas de dividende
 
-CALL_PUT     = 'CALL'        # 'CALL' ou 'PUT'
-EXERCISE     = 'AMERICAN'    # 'EUROPEAN' ou 'AMERICAN'
+CALL_PUT     = 'PUT'        # 'CALL' ou 'PUT'
+EXERCISE     = 'EUROPEAN'    # 'EUROPEAN' ou 'AMERICAN'
 
 # Monte Carlo
-MC_PATHS      = 10_000
+MC_PATHS      = 100_000
 MC_STEPS      = 250           # pas de temps (surtout utile pour l'américain)
 MC_ANTITHETIC = True
 MC_SEED       = 2
