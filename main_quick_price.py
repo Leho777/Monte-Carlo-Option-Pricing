@@ -13,6 +13,7 @@ from src.option_trade import OptionTrade
 from src.black_scholes import BlackScholes
 from src.monte_carlo_model import MonteCarloModel
 from src.regression import BasisType
+from greeks import MCGreeks
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  PARAMÈTRES  ← modifier ici
@@ -84,6 +85,39 @@ print(f"  Monte Carlo ({MC_PATHS:,} paths)  :  {price:>10.4f}  ±{1.96*se:.4f}  
 print(f"  σ payoffs (brut)       :  {sigma_payoffs:>10.4f}  = SE × √N = {se:.4f} × √{N:,}")
 print(f"  Variance payoffs       :  {sigma_payoffs**2:>10.4f}  = σ²  (variance d'un payoff individuel)")
 print(f"  Variance du prix (SE²) :  {se**2:>10.6f}  = σ²/N  (variance de l'estimateur)")
+print("─" * 52)
+
+# — Greeks Monte Carlo
+print(f"  Calcul des Greeks MC ({MC_PATHS:,} paths, CRN)...")
+g_calc   = MCGreeks(
+    market=market,
+    option=option,
+    pricing_date=PRICING_DATE,
+    num_paths=MC_PATHS,
+    antithetic=MC_ANTITHETIC,
+    seed=MC_SEED,
+    num_steps=MC_STEPS,
+)
+greeks = g_calc.all_greeks()
+print(f"  {'Greek':<8}  {'Valeur':>10}   {'SE':>10}")
+print("─" * 52)
+for g in (greeks.delta, greeks.gamma, greeks.vega, greeks.theta, greeks.rho):
+    if math.isnan(g.value):
+        print(f"  {g.name:<8}  {'n/a':>10}   {'n/a':>10}")
+    else:
+        print(f"  {g.name:<8}  {g.value:>10.5f}   {g.se:>10.5f}")
+print("─" * 52)
+
+# — Hedging pratique
+delta_val = greeks.delta.value
+gamma_val = greeks.gamma.value
+hedge_sign = "acheter" if delta_val < 0 else "vendre"
+print(f"  Delta hedge  : si long 1 option → {hedge_sign} {abs(delta_val):.4f} action(s)")
+print(f"                 si long N options → {hedge_sign} N × {abs(delta_val):.4f} actions")
+print(f"                 (pour N options short : inverser la direction)")
+gamma_pct = gamma_val * UNDERLYING * 0.01
+print(f"  Gamma ×(S₀×1%) = {gamma_val:.5f} × {UNDERLYING}×0.01 = {gamma_pct:.5f}")
+print(f"                 → variation du delta pour un mouvement de 1 % du sous-jacent")
 print("─" * 52)
 
 # ── Variance empirique du prix via N_RUNS répétitions indépendantes ──────────
