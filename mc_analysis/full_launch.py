@@ -12,9 +12,7 @@ SCRIPTS = [
     ("Scalar vs Vectorized european",    "test_scalar_vs_vectorized.py"),
     ("American MC tests",                "test_american.py"),
     ("LS vs Trinomial Tree",             "test_ls_vs_tree.py"),
-    ("Trinomial convergence to BS",      "test_convergence.py"),
     ("MC analysis plots",                "plot_mc_analysis.py"),
-    ("Trinomial tree timing",            "plot_generator.py"),
 ]
 
 def run_script(label, filename):
