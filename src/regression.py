@@ -4,31 +4,29 @@ import numpy as np
 
 class BasisType(str, Enum):
     """
-    Bases polynomiales disponibles pour la rÃ©gression Longstaff-Schwartz.
+    Bases polynomiales disponibles pour la régression Longstaff-Schwartz.
 
-    Toutes engendrent le mÃªme espace polynomial (mathÃ©matiquement Ã©quivalentes),
-    mais les bases orthogonales offrent une meilleure stabilitÃ© numÃ©rique
+    Toutes engendrent le même espace polynomial (mathématiquement équivalentes),
+    mais les bases orthogonales offrent une meilleure stabilité numérique
     que la base monomiale standard (POWER).
-
-    RÃ©fÃ©rence : Longstaff & Schwartz (2001) â€” Section 2, Table 1.
     """
-    POWER     = 'power'     # MonÃ´mes standard : 1, x, xÂ², xÂ³, â€¦
+    POWER     = 'power'     # Monômes standard : 1, x, x², x³, …
     LAGUERRE  = 'laguerre'  # exp(-x/2) * L_k(x)  (base de l'article L&S)
-    HERMITE   = 'hermite'   # PolynÃ´mes d'Hermite probabilistes (HermiteE)
-    LEGENDRE  = 'legendre'  # PolynÃ´mes de Legendre
-    CHEBYSHEV = 'chebyshev' # PolynÃ´mes de Chebyshev de type 1
+    HERMITE   = 'hermite'   # Polynômes d'Hermite probabilistes (Hermite)
+    LEGENDRE  = 'legendre'  # Polynômes de Legendre
+    CHEBYSHEV = 'chebyshev' # Polynômes de Chebyshev de type 1
 
 
 class Regression:
     """
-    RÃ©gression polynomiale pour Longstaff-Schwartz.
+    Régression polynomiale pour Longstaff-Schwartz.
 
-    AmÃ©liorations vs rÃ©gression naÃ¯ve (np.polyfit) :
+    Améliorations vs régression naïve (np.polyfit) :
     - Choix de la base polynomiale (BasisType) via matrice de design explicite
     - Normalisation automatique des inputs (essentielle pour LAGUERRE/HERMITE)
-    - RÃ©solution par np.linalg.lstsq (robuste aux cas singuliers)
-    - Calcul de l'Ã©cart-type rÃ©siduel aprÃ¨s fit
-    - Seuil d'exercice : exercer seulement si IV > reg + threshold * std_rÃ©sidu
+    - Résolution par np.linalg.lstsq (robuste aux cas singuliers)
+    - Calcul de l'écart-type résiduel après fit
+    - Seuil d'exercice : exercer seulement si IV > reg + threshold * std_résidu
 
     Normalisation :
     - LAGUERRE  : X_norm = X / mean(X)         â†’ valeurs autour de 1 (domaine â‰¥ 0)
@@ -46,13 +44,13 @@ class Regression:
         """
         Parameters
         ----------
-        degree             : degrÃ© du polynÃ´me (2 = quadratique comme dans L&S,
-                             3 = cubique par dÃ©faut)
+        degree             : degré du polynôme (2 = quadratique comme dans L&S,
+                             3 = cubique par défaut)
         basis              : base polynomiale (voir BasisType)
-        residual_threshold : fraction de l'Ã©cart-type rÃ©siduel ajoutÃ©e au seuil
-                             0.0 â†’ comportement LS standard
-                             0.1 â†’ exercer si IV > reg + 0.1 * std_rÃ©sidu
-        normalize          : si True (dÃ©faut), normalise les inputs avant de
+        residual_threshold : fraction de l'écart-type résiduel ajoutée au seuil
+                             0.0 → comportement LS standard
+                             0.1 → exercer si IV > reg + 0.1 * std_résidu
+        normalize          : si True (défaut), normalise les inputs avant de
                              construire la matrice de design
         """
         self.degree = degree
@@ -61,7 +59,7 @@ class Regression:
         self.normalize = normalize
         self._coeffs: np.ndarray = None
         self._residual_std: float = 0.0
-        # ParamÃ¨tres de normalisation, appris dans fit()
+        # Paramètres de normalisation, appris dans fit()
         self._x_loc: float = 0.0
         self._x_scale: float = 1.0
 
@@ -70,7 +68,7 @@ class Regression:
     # ------------------------------------------------------------------
 
     def _fit_normalization(self, X: np.ndarray) -> None:
-        """Calcule et stocke les paramÃ¨tres de normalisation sur les donnÃ©es d'entraÃ®nement."""
+        """Calcule et stocke les paramètres de normalisation sur les données d'entraînement."""
         if not self.normalize:
             self._x_loc, self._x_scale = 0.0, 1.0
             return
@@ -96,9 +94,9 @@ class Regression:
     def _design_matrix(self, X: np.ndarray) -> np.ndarray:
         """
         Construit la matrice Phi de shape (n, degree+1) dans la base choisie.
-        Les inputs sont normalisÃ©s avant Ã©valuation des polynÃ´mes.
+        Les inputs sont normalisés avant évaluation des polynômes.
 
-        Phi[i, k] = k-iÃ¨me fonction de base Ã©valuÃ©e en X_norm[i].
+        Phi[i, k] = k-ième fonction de base évaluée en X_norm[i].
         """
         X_n = self._normalize_x(X)
         d   = self.degree + 1
@@ -138,8 +136,8 @@ class Regression:
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> "Regression":
         """
-        RÃ©gression moindres-carrÃ©s dans la base choisie.
-        Apprend la normalisation sur X avant de rÃ©soudre le systÃ¨me.
+        Régession moindres-carrés dans la base choisie.
+        Apprend la normalisation sur X avant de résoudre le système.
         """
         self._fit_normalization(X)
         Phi = self._design_matrix(X)
@@ -149,7 +147,7 @@ class Regression:
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         """
-        PrÃ©dit E[continuation | S_t] dans la base choisie, clampÃ© Ã  0.
+        Prédit E[continuation | S_t] dans la base choisie, clampé à 0.
         Utilise la normalisation apprise lors du dernier fit().
         """
         if self._coeffs is None:
@@ -157,7 +155,7 @@ class Regression:
         return np.maximum(self._design_matrix(X) @ self._coeffs, 0.0)
 
     # ------------------------------------------------------------------
-    # DÃ©cision d'exercice (Longstaff-Schwartz)
+    # Décision d'exercice (Longstaff-Schwartz)
     # ------------------------------------------------------------------
 
     def exercise_decision(self,
@@ -165,16 +163,16 @@ class Regression:
                           intrinsic: np.ndarray,
                           continuation_discounted: np.ndarray) -> np.ndarray:
         """
-        DÃ©cision d'exercice optimal Ã  un pas de temps.
+        Décision d'exercice optimal à un pas de temps.
 
         Condition d'exercice avec seuil (cf. cours 1/7/2026 forward price example) :
-            Exercer si IV(S) > E[continuation | S] + residual_threshold * std_rÃ©sidu
+            Exercer si IV(S) > E[continuation | S] + residual_threshold * std_résidu
 
         Parameters
         ----------
-        S_at_step             : prix du sous-jacent Ã  ce step, shape (num_paths,)
-        intrinsic             : valeur intrinsÃ¨que, shape (num_paths,)
-        continuation_discounted : cash flow futur discountÃ© d'un step, shape (num_paths,)
+        S_at_step             : prix du sous-jacent à ce step, shape (num_paths,)
+        intrinsic             : valeur intrinsèque, shape (num_paths,)
+        continuation_discounted : cash flow futur discounté d'un step, shape (num_paths,)
         """
         itm_mask = intrinsic > 0
         n_itm = int(np.sum(itm_mask))

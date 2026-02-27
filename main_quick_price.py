@@ -1,5 +1,8 @@
 """
-main_quick_price.py — Pricing rapide d'une option
+main_quick_price.py, Pricing d'une option : 
+
+INPUT : PARAMÈTRES DU MARCHÉ, DE L'OPTION, ET DE LA SIMULATION MC
+OUTPUT : prix de l'option par MC (avec IC) et par BS (si européen), Greeks MC, variance empirique du prix sur N_RUNS répétitions indépendantes.
 
 Modifier le bloc PARAMÈTRES ci-dessous, puis lancer :
     python main_quick_price.py
@@ -13,10 +16,10 @@ from src.option_trade import OptionTrade
 from src.black_scholes import BlackScholes
 from src.monte_carlo_model import MonteCarloModel
 from src.regression import BasisType
-from greeks import MCGreeks
+from src.greeks import MCGreeks
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  PARAMÈTRES  ← modifier ici
+#  PARAMÈTRES
 # ══════════════════════════════════════════════════════════════════════════════
 
 PRICING_DATE = date(2026, 2, 26)
@@ -36,12 +39,12 @@ EXERCISE     = 'AMERICAN'    # 'EUROPEAN' ou 'AMERICAN'
 
 # Monte Carlo
 MC_PATHS      = 100_000
-MC_STEPS      = 250           # pas de temps (surtout utile pour l'américain)
+MC_STEPS      = 250           # pas de temps (pour l'américain)
 MC_ANTITHETIC = True
 MC_SEED       = 2
 
-# Variance du prix — répétitions indépendantes
-N_RUNS        = 10           # nombre de runs avec seeds différentes
+# Répétitions indépendantes en changeant la seed pour estimer la variance empirique du prix
+N_RUNS        = 10
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  CALCUL
@@ -58,7 +61,7 @@ print(f"  Option  : {CALL_PUT}  {EXERCISE}")
 print(f"  S={UNDERLYING}  K={STRIKE}  σ={VOL:.0%}  r={RATE:.0%}")
 if div_date:
     print(f"  Dividende : {DIV_AMOUNT} le {div_date}")
-print(f"  Maturité : {MATURITY}  (évaluation : {PRICING_DATE})")
+print(f"  Maturité : {MATURITY}  (Date d'évaluation : {PRICING_DATE})")
 print("─" * 52)
 
 # — Black-Scholes (européen uniquement)
