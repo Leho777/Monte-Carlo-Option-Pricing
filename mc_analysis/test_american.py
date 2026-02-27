@@ -1,15 +1,18 @@
 """
-Test script for American option pricing
-- Scalar vs Vectorized Monte Carlo comparison
-- Comparison with Trinomial Tree
+Test script for American option pricing using Longstaff-Schwartz MC.
+- LS accuracy vs Trinomial Tree reference
 - Convergence analysis
+- Steps impact
+- American vs European early exercise premium
+- Antithetic variance reduction (visible plot)
 
 OUTPUT : plots/american_options.png
+         plots/american_antithetic.png
 """
 import sys, os, time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from datetime import date, timedelta
+from datetime import date
 import numpy as np
 import matplotlib.pyplot as plt
 from src.market import Market
@@ -21,445 +24,332 @@ from src_trinomial.trinomial_model import TrinomialModel
 PLOTS_DIR = os.path.join(os.path.dirname(__file__), 'plots')
 os.makedirs(PLOTS_DIR, exist_ok=True)
 
+# ─── Common parameters ────────────────────────────────────────────────────────
+PRICING_DATE  = date(2025, 9, 1)
+MAT_DATE      = date(2026, 3, 1)   # 6 months
+MARKET        = Market(underlying=100.0, vol=0.30, rate=0.05, div_a=0.0, ex_div_date=None)
+K             = 100.0
+LS_STEPS      = 80   # num_steps used by default in LS calls
+LS_DEGREE     = 3
 
-def test_american_scalar_vs_vectorized():
-    """Compare scalar and vectorized American pricing"""
-    print("\n" + "=" * 80)
-    print("TEST 1: AMERICAN OPTION - SCALAR vs VECTORIZED")
-    print("=" * 80)
-    
-    # Setup
-    pricing_date = date(2025, 9, 1)
-    maturity_date = date(2026, 3, 1)  # 6 months
-    
-    market = Market(
-        underlying=100.0,
-        vol=0.30,
-        rate=0.05,
-        div_a=0.0,
-        ex_div_date=None
+
+def _ls(n_sims, cp, antithetic=True, num_steps=LS_STEPS, seed=42):
+    """Helper: price american option with Longstaff-Schwartz."""
+    opt = OptionTrade(mat=MAT_DATE, call_put=cp, ex='AMERICAN', k=K)
+    mc  = MonteCarloModel(n_sims, MARKET, opt, PRICING_DATE, seed=seed)
+    return mc.price_american_longstaff_schwartz_vectorized(
+        num_steps=num_steps, poly_degree=LS_DEGREE, antithetic=antithetic
     )
-    
-    # Test both CALL and PUT
-    for call_put in ['CALL', 'PUT']:
-        option = OptionTrade(
-            mat=maturity_date,
-            call_put=call_put,
-            ex='AMERICAN',
-            k=100.0
-        )
-        
-        print(f"\n{'-'*80}")
-        print(f"AMERICAN {call_put} (K=100, S0=100, σ=30%, r=5%, T=6m)")
-        print(f"{'-'*80}")
-        
-        for num_sims in [5000, 25000]:
-            print(f"\nNumber of Simulations: {num_sims:,}")
-            print(f"{'Number of Steps':>20} | {'Scalar Price':>15} | {'Scalar Time':>12} | "
-                  f"{'Vector Price':>15} | {'Vector Time':>12} | {'Speedup':>8} | "
-                  f"{'Price Diff':>12}")
-            print("-" * 130)
-            
-            for num_steps in [50, 100, 252]:
-                mc = MonteCarloModel(
-                    num_simulations=num_sims,
-                    market=market,
-                    option=option,
-                    pricing_date=pricing_date,
-                    seed=42
-                )
-                
-                # Compare implementations — inline (la méthode compare a été retirée du modèle)
-                t0 = time.perf_counter()
-                r_scalar = mc.price_american_naive(num_steps=num_steps, antithetic=True)
-                scalar_time = time.perf_counter() - t0
-
-                t0 = time.perf_counter()
-                r_vector = mc.price_american_naive_vectorized(num_steps=num_steps, antithetic=True)
-                vector_time = time.perf_counter() - t0
-
-                scalar_price = r_scalar['price']
-                vector_price = r_vector['price']
-                speedup = scalar_time / vector_time if vector_time > 0 else float('inf')
-                price_diff = abs(scalar_price - vector_price)
-                
-                print(f"{num_steps:>20} | {scalar_price:>15.6f} | {scalar_time:>12.4f}s | "
-                      f"{vector_price:>15.6f} | {vector_time:>12.4f}s | {speedup:>8.2f}x | "
-                      f"{price_diff:>12.2e}")
 
 
-def test_american_naive_vs_trinomial():
-    """Compare Monte Carlo American pricing with Trinomial Tree"""
-    print("\n" + "=" * 80)
-    print("TEST 2: AMERICAN OPTION - MONTE CARLO vs TRINOMIAL TREE")
-    print("=" * 80)
-    
-    # Setup
-    pricing_date = date(2025, 9, 1)
-    maturity_date = date(2026, 3, 1)  # 6 months
-    
-    market = Market(
-        underlying=100.0,
-        vol=0.30,
-        rate=0.05,
-        div_a=0.0,
-        ex_div_date=None
-    )
-    
-    # Test both CALL and PUT
-    for call_put in ['CALL', 'PUT']:
-        option = OptionTrade(
-            mat=maturity_date,
-            call_put=call_put,
-            ex='AMERICAN',
-            k=100.0
-        )
-        
-        print(f"\n{'-'*80}")
-        print(f"AMERICAN {call_put} (K=100, S0=100, σ=30%, r=5%, T=6m)")
-        print(f"{'-'*80}")
-        
-        # Trinomial Tree pricing
-        print(f"\nTrinomial Tree Pricing:")
-        tree_prices = {}
-        for tree_steps in [10, 20, 30, 50]:
-            tree = Tree(tree_steps, market, option, pricing_date, prunning_threshold=1e-8)
+def _tree_ref(cp, steps=60):
+    """Helper: trinomial tree reference price."""
+    opt  = OptionTrade(mat=MAT_DATE, call_put=cp, ex='AMERICAN', k=K)
+    tree = Tree(steps, MARKET, opt, PRICING_DATE, prunning_threshold=1e-8)
+    tree.build_tree()
+    return TrinomialModel(PRICING_DATE, tree).price(opt, "backward")
+
+
+# ─── Test 1 ───────────────────────────────────────────────────────────────────
+
+def test_american_ls_accuracy():
+    """LS American pricing accuracy vs trinomial tree reference."""
+    print("\n" + "=" * 90)
+    print("TEST 1: LONGSTAFF-SCHWARTZ ACCURACY vs TRINOMIAL TREE")
+    print("=" * 90)
+
+    for cp in ['CALL', 'PUT']:
+        ref = _tree_ref(cp, steps=60)
+        print(f"\n  American {cp}  — Tree ref (60 steps) = {ref:.6f}")
+        print(f"  {'N sims':>8} | {'LS price':>10} | {'Std err':>9} | {'Error':>9} | {'Error %':>8}")
+        print("  " + "-" * 60)
+        for n in [2_000, 5_000, 10_000, 25_000, 50_000]:
+            r = _ls(n, cp)
+            err = abs(r['price'] - ref)
+            print(f"  {n:>8,} | {r['price']:>10.5f} | {r['std_error']:>9.5f} | "
+                  f"{err:>9.5f} | {100*err/ref:>7.2f}%")
+
+
+# ─── Test 2 ───────────────────────────────────────────────────────────────────
+
+def test_american_ls_vs_trinomial():
+    """LS vs trinomial for varying market parameters."""
+    print("\n" + "=" * 90)
+    print("TEST 2: LS vs TRINOMIAL — VARYING SPOT & VOLATILITY")
+    print("=" * 90)
+
+    n_sims = 20_000
+    for cp in ['CALL', 'PUT']:
+        print(f"\n  American {cp}  (N={n_sims:,}, K={K}, r=5%, T=6m)")
+
+        # --- Varying spot ---
+        print(f"\n  Spot sensitivity:")
+        print(f"  {'S0':>6} | {'Tree ref':>10} | {'LS price':>10} | {'Diff':>8} | {'Diff %':>7}")
+        print("  " + "-" * 55)
+        for s0 in [80, 90, 95, 100, 105, 110, 120]:
+            mkt  = Market(s0, 0.30, 0.05, 0.0, None)
+            opt  = OptionTrade(mat=MAT_DATE, call_put=cp, ex='AMERICAN', k=K)
+            tree = Tree(60, mkt, opt, PRICING_DATE, prunning_threshold=1e-8)
             tree.build_tree()
-            trinomial_model = TrinomialModel(pricing_date, tree)
-            tree_price = trinomial_model.price(option, "backward")
-            tree_prices[tree_steps] = tree_price
-            print(f"  Steps={tree_steps:3d}: {tree_price:.6f}")
-        
-        # Use the finest trinomial as reference
-        reference_price = tree_prices[max(tree_prices.keys())]
-        
-        # Monte Carlo pricing
-        print(f"\nMonte Carlo Pricing (Vectorized):")
-        print(f"{'MC Sims':>10} | {'MC Steps':>10} | {'MC Price':>12} | {'Std Error':>12} | "
-              f"{'Error vs Tree':>15} | {'Error %':>10}")
-        print("-" * 85)
-        
-        for num_sims in [5000, 10000, 25000]:
-            mc = MonteCarloModel(
-                num_simulations=num_sims,
-                market=market,
-                option=option,
-                pricing_date=pricing_date,
-                seed=42
-            )
-            
-            for mc_steps in [50, 100, 252]:
-                result = mc.price_american_naive_vectorized(
-                    num_steps=mc_steps,
-                    antithetic=True
-                )
-                
-                mc_price = result['price']
-                std_error = result['std_error']
-                error = abs(mc_price - reference_price)
-                error_pct = (error / reference_price) * 100 if reference_price != 0 else 0
-                
-                print(f"{num_sims:>10,} | {mc_steps:>10} | {mc_price:>12.6f} | "
-                      f"{std_error:>12.6f} | {error:>15.6f} | {error_pct:>9.2f}%")
+            ref  = TrinomialModel(PRICING_DATE, tree).price(opt, "backward")
+            mc   = MonteCarloModel(n_sims, mkt, opt, PRICING_DATE, seed=42)
+            r    = mc.price_american_longstaff_schwartz_vectorized(
+                       num_steps=LS_STEPS, poly_degree=LS_DEGREE, antithetic=True)
+            diff = r['price'] - ref
+            print(f"  {s0:>6} | {ref:>10.5f} | {r['price']:>10.5f} | {diff:>+8.5f} | "
+                  f"{100*abs(diff)/ref:>6.2f}%")
 
+
+# ─── Test 3 ───────────────────────────────────────────────────────────────────
 
 def test_american_convergence():
-    """Test convergence of American pricing with increasing simulations"""
-    print("\n" + "=" * 80)
-    print("TEST 3: CONVERGENCE ANALYSIS - AMERICAN OPTIONS")
-    print("=" * 80)
-    
-    pricing_date = date(2025, 9, 1)
-    maturity_date = date(2026, 3, 1)  # 6 months
-    
-    market = Market(
-        underlying=100.0,
-        vol=0.30,
-        rate=0.05,
-        div_a=0.0,
-        ex_div_date=None
-    )
-    
-    option_put = OptionTrade(
-        mat=maturity_date,
-        call_put='PUT',
-        ex='AMERICAN',
-        k=100.0
-    )
-    
-    print(f"\nAMERICAN PUT - Convergence with increasing simulations")
-    print(f"Number of steps: 100")
-    print(f"{'N Sims':>10} | {'Price':>12} | {'Std Error':>12} | {'95% CI Lower':>15} | "
-          f"{'95% CI Upper':>15}")
-    print("-" * 80)
-    
-    prices = []
-    std_errors = []
-    
-    for num_sims in [1000, 5000, 10000, 25000, 50000]:
-        mc = MonteCarloModel(
-            num_simulations=num_sims,
-            market=market,
-            option=option_put,
-            pricing_date=pricing_date,
-            seed=None  # No seed for convergence test
-        )
-        
-        result = mc.price_american_naive_vectorized(
-            num_steps=100,
-            antithetic=True
-        )
-        
-        price = result['price']
-        std_error = result['std_error']
-        
-        prices.append(price)
-        std_errors.append(std_error)
-        
-        ci_lower = price - 1.96 * std_error
-        ci_upper = price + 1.96 * std_error
-        
-        print(f"{num_sims:>10,} | {price:>12.6f} | {std_error:>12.6f} | "
-              f"{ci_lower:>15.6f} | {ci_upper:>15.6f}")
-    
-    print(f"\n✓ Price should stabilize as N increases")
-    print(f"✓ Std error should decrease as 1/√N")
+    """LS convergence with increasing N (log-log SE plot)."""
+    print("\n" + "=" * 90)
+    print("TEST 3: LONGSTAFF-SCHWARTZ CONVERGENCE  (SE ~ 1/√N)")
+    print("=" * 90)
 
+    ref = _tree_ref('PUT', steps=60)
+    print(f"\n  American PUT  — Tree ref = {ref:.6f}")
+    print(f"  {'N sims':>8} | {'LS price':>10} | {'Std err':>9} | {'95% CI':>22} | {'Error':>8}")
+    print("  " + "-" * 72)
+
+    for n in [1_000, 2_500, 5_000, 10_000, 25_000, 50_000]:
+        r  = _ls(n, 'PUT', seed=None)
+        lo = r['price'] - 1.96 * r['std_error']
+        hi = r['price'] + 1.96 * r['std_error']
+        print(f"  {n:>8,} | {r['price']:>10.5f} | {r['std_error']:>9.5f} | "
+              f"[{lo:.5f}, {hi:.5f}] | {abs(r['price']-ref):>8.5f}")
+
+
+# ─── Test 4 ───────────────────────────────────────────────────────────────────
 
 def test_american_steps_impact():
-    """Test impact of number of steps on American option pricing"""
-    print("\n" + "=" * 80)
-    print("TEST 4: IMPACT OF NUMBER OF STEPS ON AMERICAN PRICING")
-    print("=" * 80)
-    
-    pricing_date = date(2025, 9, 1)
-    maturity_date = date(2026, 3, 1)  # 6 months
-    
-    market = Market(
-        underlying=100.0,
-        vol=0.30,
-        rate=0.05,
-        div_a=0.0,
-        ex_div_date=None
-    )
-    
-    option_put = OptionTrade(
-        mat=maturity_date,
-        call_put='PUT',
-        ex='AMERICAN',
-        k=100.0
-    )
-    
-    num_sims = 10000
-    
-    print(f"\nAMERICAN PUT - Impact of discretization steps")
-    print(f"Number of simulations: {num_sims:,}")
-    print(f"{'Steps':>8} | {'Price':>12} | {'Std Error':>12} | {'Time (s)':>10} | "
-          f"{'Interpretation':>30}")
-    print("-" * 85)
-    
-    previous_price = None
-    
-    for num_steps in [10, 25, 50, 100, 252]:
-        mc = MonteCarloModel(
-            num_simulations=num_sims,
-            market=market,
-            option=option_put,
-            pricing_date=pricing_date,
-            seed=42
-        )
-        
-        start = time.time()
-        result = mc.price_american_naive_vectorized(
-            num_steps=num_steps,
-            antithetic=True
-        )
-        exec_time = time.time() - start
-        
-        price = result['price']
-        std_error = result['std_error']
-        
-        interpretation = ""
-        if previous_price is not None:
-            change = price - previous_price
-            if abs(change) < 0.001:
-                interpretation = "Converged"
-            elif change > 0:
-                interpretation = f"↑ Price increasing"
-            else:
-                interpretation = f"↓ Price decreasing"
-        
-        print(f"{num_steps:>8} | {price:>12.6f} | {std_error:>12.6f} | {exec_time:>10.4f} | "
-              f"{interpretation:>30}")
-        
-        previous_price = price
-    
-    print(f"\n✓ Price typically increases with more steps (captures more early exercise)")
-    print(f"✓ Convergence expected around 100-252 steps for 6-month option")
+    """Impact of the number of LS discretization steps on price."""
+    print("\n" + "=" * 90)
+    print("TEST 4: IMPACT OF DISCRETIZATION STEPS ON LS PRICE")
+    print("=" * 90)
 
+    n_sims = 20_000
+    ref = _tree_ref('PUT', steps=60)
+    print(f"\n  American PUT  (N={n_sims:,}) — Tree ref = {ref:.6f}")
+    print(f"  {'Steps':>7} | {'LS price':>10} | {'Std err':>9} | {'Time':>7} | {'Δ vs ref':>9}")
+    print("  " + "-" * 58)
+
+    prev = None
+    for steps in [10, 25, 50, 80, 120, 200]:
+        opt = OptionTrade(mat=MAT_DATE, call_put='PUT', ex='AMERICAN', k=K)
+        mc  = MonteCarloModel(n_sims, MARKET, opt, PRICING_DATE, seed=42)
+        t0  = time.perf_counter()
+        r   = mc.price_american_longstaff_schwartz_vectorized(
+                  num_steps=steps, poly_degree=LS_DEGREE, antithetic=True)
+        elapsed = time.perf_counter() - t0
+        diff = r['price'] - ref
+        conv = "" if prev is None else ("→ stable" if abs(r['price'] - prev) < 5e-4 else "")
+        print(f"  {steps:>7} | {r['price']:>10.5f} | {r['std_error']:>9.5f} | "
+              f"{elapsed:>6.2f}s | {diff:>+9.5f}  {conv}")
+        prev = r['price']
+
+
+# ─── Test 5 ───────────────────────────────────────────────────────────────────
 
 def test_american_vs_european():
-    """Compare American vs European option prices"""
-    print("\n" + "=" * 80)
-    print("TEST 5: AMERICAN vs EUROPEAN OPTIONS")
-    print("=" * 80)
-    
-    pricing_date = date(2025, 9, 1)
-    maturity_date = date(2026, 3, 1)  # 6 months
-    
-    market = Market(
-        underlying=100.0,
-        vol=0.30,
-        rate=0.05,
-        div_a=0.0,
-        ex_div_date=None
-    )
-    
-    num_sims = 25000
-    
-    for call_put in ['CALL', 'PUT']:
-        print(f"\n{'-'*80}")
-        print(f"{call_put} OPTION (K=100, S0=100, σ=30%, r=5%, T=6m)")
-        print(f"{'-'*80}")
-        
-        # American option
-        option_american = OptionTrade(
-            mat=maturity_date,
-            call_put=call_put,
-            ex='AMERICAN',
-            k=100.0
-        )
-        
-        # European option
-        option_european = OptionTrade(
-            mat=maturity_date,
-            call_put=call_put,
-            ex='EUROPEAN',
-            k=100.0
-        )
-        
-        # Price American
-        mc_american = MonteCarloModel(
-            num_simulations=num_sims,
-            market=market,
-            option=option_american,
-            pricing_date=pricing_date,
-            seed=42
-        )
-        result_american = mc_american.price_american_naive_vectorized(
-            num_steps=100,
-            antithetic=True
-        )
-        
-        # Price European
-        mc_european = MonteCarloModel(
-            num_simulations=num_sims,
-            market=market,
-            option=option_european,
-            pricing_date=pricing_date,
-            seed=42
-        )
-        result_european = mc_european.price_european_vectorized(antithetic=True)
-        
-        american_price = result_american['price']
-        american_error = result_american['std_error']
-        european_price = result_european['price']
-        european_error = result_european['std_error']
-        
-        early_exercise_value = american_price - european_price
-        
-        print(f"\nAmerican:  {american_price:.6f} (±{american_error:.6f})")
-        print(f"European:  {european_price:.6f} (±{european_error:.6f})")
-        print(f"\nEarly exercise premium: {early_exercise_value:.6f}")
-        
-        if call_put == 'PUT':
-            print("✓ PUT: American ≥ European (early exercise can be valuable)")
+    """American vs European — early exercise premium via LS."""
+    print("\n" + "=" * 90)
+    print("TEST 5: AMERICAN vs EUROPEAN — EARLY EXERCISE PREMIUM (LS)")
+    print("=" * 90)
+
+    n_sims = 25_000
+    for cp in ['CALL', 'PUT']:
+        opt_am = OptionTrade(mat=MAT_DATE, call_put=cp, ex='AMERICAN', k=K)
+        opt_eu = OptionTrade(mat=MAT_DATE, call_put=cp, ex='EUROPEAN', k=K)
+        mc_am  = MonteCarloModel(n_sims, MARKET, opt_am, PRICING_DATE, seed=42)
+        mc_eu  = MonteCarloModel(n_sims, MARKET, opt_eu, PRICING_DATE, seed=42)
+        r_am   = mc_am.price_american_longstaff_schwartz_vectorized(
+                     num_steps=LS_STEPS, poly_degree=LS_DEGREE, antithetic=True)
+        r_eu   = mc_eu.price_european_vectorized(antithetic=True)
+        prem   = r_am['price'] - r_eu['price']
+
+        print(f"\n  {cp}:")
+        print(f"    American (LS):  {r_am['price']:.5f}  ±{r_am['std_error']:.5f}")
+        print(f"    European MC:    {r_eu['price']:.5f}  ±{r_eu['std_error']:.5f}")
+        print(f"    Early exercise: {prem:+.5f}")
+        if cp == 'PUT':
+            ok = prem >= -2 * (r_am['std_error'] + r_eu['std_error'])
+            print(f"    ✓ AM PUT ≥ EU PUT" if ok else "    ✗ Unexpected: AM PUT < EU PUT")
         else:
-            print("✓ CALL: American ≈ European (early exercise typically not optimal without dividends)")
+            print(f"    ✓ CALL: premium ≈ 0 without dividends (expected)")
+
+
+# ─── Plots ────────────────────────────────────────────────────────────────────
+
+def plot_antithetic_comparison():
+    """
+    2-panel figure showing antithetic variance reduction clearly:
+      Left : std_error vs N (log-log)  — with vs without antithetic
+      Right: 95% CI half-width vs N    — same comparison
+    Saves plots/american_antithetic.png
+    """
+    sim_counts = [500, 1_000, 2_500, 5_000, 10_000, 20_000]
+    se_with, se_without = [], []
+
+    print("\n  Antithetic study: computing SE with / without antithetic...")
+    for n in sim_counts:
+        r_on  = _ls(n, 'PUT', antithetic=True,  seed=None)
+        r_off = _ls(n, 'PUT', antithetic=False, seed=None)
+        se_with.append(r_on['std_error'])
+        se_without.append(r_off['std_error'])
+        print(f"    N={n:6,}  SE_antith={r_on['std_error']:.5f}  SE_plain={r_off['std_error']:.5f}"
+              f"  ratio={r_off['std_error']/r_on['std_error']:.2f}x")
+
+    ns   = np.array(sim_counts, dtype=float)
+    se_w = np.array(se_with)
+    se_o = np.array(se_without)
+
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+    fig.suptitle("Réduction de variance antithétique — American PUT LS\n"
+                 f"K={K}, σ=30%, r=5%, T=6m, poly_degree={LS_DEGREE}",
+                 fontsize=12, fontweight='bold')
+
+    # Panel 1 — log-log SE vs N
+    ax = axes[0]
+    ax.loglog(ns, se_o, 'o--', color='tomato',    lw=1.8, ms=6, label='Sans antithétique')
+    ax.loglog(ns, se_w, 's-',  color='steelblue', lw=1.8, ms=6, label='Avec antithétique')
+    # Theoretical -0.5 slope reference
+    anchor = se_o[0] * (ns[0] / ns) ** 0.5
+    ax.loglog(ns, anchor, ':', color='gray', lw=1.2, label='Pente théorique −½')
+    ax.set_xlabel('N simulations (log)')
+    ax.set_ylabel('Std error (log)')
+    ax.set_title('Std error vs N  (log-log)')
+    ax.legend()
+    ax.grid(True, which='both', alpha=0.3)
+
+    # Panel 2 — ratio SE_plain / SE_antith vs N
+    ax2 = axes[1]
+    ratio = se_o / se_w
+    ax2.semilogx(ns, ratio, 'D-', color='mediumseagreen', lw=2, ms=7)
+    ax2.axhline(1.0, ls='--', color='gray', lw=1)
+    ax2.fill_between(ns, 1.0, ratio, alpha=0.15, color='mediumseagreen')
+    ax2.set_xlabel('N simulations (log)')
+    ax2.set_ylabel('SE_plain / SE_antith')
+    ax2.set_title('Gain en précision  (ratio > 1 = antithétique meilleur)')
+    ax2.grid(alpha=0.3)
+    # Annotate last point
+    ax2.annotate(f'×{ratio[-1]:.2f}',
+                 xy=(ns[-1], ratio[-1]), xytext=(-40, 8),
+                 textcoords='offset points', fontsize=10, color='mediumseagreen',
+                 arrowprops=dict(arrowstyle='->', color='mediumseagreen'))
+
+    plt.tight_layout()
+    out = os.path.join(PLOTS_DIR, 'american_antithetic.png')
+    plt.savefig(out, dpi=150)
+    print(f"\n  ✓ Saved {out}")
+    plt.close()
 
 
 def plot_am_vs_eu():
     """
-    Graphique : prime d'exercice anticipé (AM - EU) pour Call et Put,
-    en fonction du spot S0.  Sauvegarde plots/american_options.png.
+    3-panel figure:
+      Left  : LS AM price vs trinomial ref for PUT at varying spots
+      Centre: early exercise premium (AM−EU) PUT vs CALL
+      Right : LS SE vs N log-log (slope check)
+    Saves plots/american_options.png
     """
-    pricing_date  = date(2025, 9, 1)
-    maturity_date = date(2026, 3, 1)  # 6 mois
-    K, R, sigma   = 100.0, 0.05, 0.30
-    n_sims        = 15_000
-    num_steps     = 80
+    spots  = [80, 90, 95, 100, 105, 110, 120]
+    n_sims = 15_000
 
-    spots    = [80, 90, 95, 100, 105, 110, 120]
-    call_premiums = []
-    put_premiums  = []
+    ls_put, tree_put, prem_put, prem_call = [], [], [], []
 
-    print("\n  Calcul de la prime américaine pour différents spots...")
+    print("\n  Building AM vs EU plot data...")
     for s0 in spots:
-        mkt = Market(s0, sigma, R, 0.0, None)
-        for cp, lst in [('CALL', call_premiums), ('PUT', put_premiums)]:
-            opt_am = OptionTrade(mat=maturity_date, call_put=cp, ex='AMERICAN', k=K)
-            opt_eu = OptionTrade(mat=maturity_date, call_put=cp, ex='EUROPEAN', k=K)
-            mc_am = MonteCarloModel(n_sims, mkt, opt_am, pricing_date, seed=42)
-            mc_eu = MonteCarloModel(n_sims, mkt, opt_eu, pricing_date, seed=42)
+        mkt = Market(s0, 0.30, 0.05, 0.0, None)
+        for cp in ['PUT', 'CALL']:
+            opt_am = OptionTrade(mat=MAT_DATE, call_put=cp, ex='AMERICAN', k=K)
+            opt_eu = OptionTrade(mat=MAT_DATE, call_put=cp, ex='EUROPEAN', k=K)
+            mc_am  = MonteCarloModel(n_sims, mkt, opt_am, PRICING_DATE, seed=42)
+            mc_eu  = MonteCarloModel(n_sims, mkt, opt_eu, PRICING_DATE, seed=42)
             pam = mc_am.price_american_longstaff_schwartz_vectorized(
-                num_steps=num_steps, antithetic=True)['price']
+                      num_steps=LS_STEPS, poly_degree=LS_DEGREE, antithetic=True)['price']
             peu = mc_eu.price_european_vectorized(antithetic=True)['price']
-            lst.append(pam - peu)
-        print(f"    S0={s0}  CallPremium={call_premiums[-1]:.4f}  PutPremium={put_premiums[-1]:.4f}")
+            if cp == 'PUT':
+                tree = Tree(60, mkt, opt_am, PRICING_DATE, prunning_threshold=1e-8)
+                tree.build_tree()
+                tree_put.append(TrinomialModel(PRICING_DATE, tree).price(opt_am, "backward"))
+                ls_put.append(pam)
+                prem_put.append(pam - peu)
+            else:
+                prem_call.append(pam - peu)
+        print(f"    S0={s0}  PremPUT={prem_put[-1]:.4f}  PremCALL={prem_call[-1]:.4f}")
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    fig.suptitle("Prime d'exercice anticipé MC (AM \u2212 EU)\n"
-                 f"K={K}, \u03c3={sigma:.0%}, r={R:.0%}, T=6m, N={n_sims:,}",
+    # LS SE vs N for slope panel
+    ns_range = [500, 1_000, 2_500, 5_000, 10_000, 25_000]
+    se_vals  = [_ls(n, 'PUT', seed=None)['std_error'] for n in ns_range]
+
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+    fig.suptitle(f"American PUT  LS (K={K}, σ=30%, r=5%, T=6m)",
                  fontsize=12, fontweight='bold')
 
-    for ax, premiums, cp, color in [
-        (axes[0], call_premiums, 'CALL', 'steelblue'),
-        (axes[1], put_premiums,  'PUT',  'tomato'),
-    ]:
-        ax.bar(spots, premiums, width=4, color=color, alpha=0.8, edgecolor='white')
-        ax.axhline(0, color='gray', lw=0.8, ls='--')
-        ax.set_xlabel('Spot S₀')
-        ax.set_ylabel('Prime AM \u2212 EU')
-        ax.set_title(f'{cp} \u2014 Prime d\'exercice anticipé')
-        ax.grid(axis='y', alpha=0.3)
+    # Panel 1: LS vs Tree
+    ax = axes[0]
+    ax.plot(spots, tree_put, 'k--o', ms=5, lw=1.5, label='Trinomial Tree (ref)')
+    ax.plot(spots, ls_put,  'tomato', marker='s', ms=5, lw=1.5, ls='-', label='LS MC')
+    ax.set_xlabel('Spot S₀')
+    ax.set_ylabel('Prix PUT américain')
+    ax.set_title('LS MC vs Trinomial Tree')
+    ax.legend(); ax.grid(alpha=0.3)
+
+    # Panel 2: early exercise premiums
+    ax2 = axes[1]
+    x   = np.arange(len(spots))
+    w   = 0.35
+    ax2.bar(x - w/2, prem_put,  width=w, color='tomato',    alpha=0.8, label='PUT')
+    ax2.bar(x + w/2, prem_call, width=w, color='steelblue', alpha=0.8, label='CALL')
+    ax2.axhline(0, color='gray', lw=0.8, ls='--')
+    ax2.set_xticks(x); ax2.set_xticklabels(spots)
+    ax2.set_xlabel('Spot S₀')
+    ax2.set_ylabel('AM − EU')
+    ax2.set_title("Prime d'exercice anticipé (AM − EU)")
+    ax2.legend(); ax2.grid(axis='y', alpha=0.3)
+
+    # Panel 3: SE log-log slope
+    ax3 = axes[2]
+    ns_arr = np.array(ns_range, dtype=float)
+    se_arr = np.array(se_vals)
+    ax3.loglog(ns_arr, se_arr, 'o-', color='steelblue', ms=6, lw=1.8, label='SE empirique')
+    slope_ref = se_arr[0] * (ns_arr[0] / ns_arr) ** 0.5
+    ax3.loglog(ns_arr, slope_ref, '--', color='gray', lw=1.2, label='Pente −½ théorique')
+    ax3.set_xlabel('N simulations')
+    ax3.set_ylabel('Std error')
+    ax3.set_title('Convergence SE  (log-log, pente ≈ −½)')
+    ax3.legend(); ax3.grid(True, which='both', alpha=0.3)
 
     plt.tight_layout()
     out = os.path.join(PLOTS_DIR, 'american_options.png')
     plt.savefig(out, dpi=150)
-    print(f"\n\u2713 Graphique sauvegardé : {out}")
+    print(f"\n  ✓ Saved {out}")
     plt.close()
 
 
-def main():
-    """Run all American option tests"""
-    print("\n" * 2)
-    print("#" * 80)
-    print("# AMERICAN OPTION PRICING TEST SUITE")
-    print("#" * 80)
-    
-    try:
-        # Test 1: Scalar vs Vectorized
-        test_american_scalar_vs_vectorized()
-        
-        # Test 2: MC vs Trinomial
-        test_american_vs_trinomial()
-        
-        # Test 3: Convergence
-        test_american_convergence()
-        
-        # Test 4: Impact of steps
-        test_american_steps_impact()
-        
-        # Test 5: American vs European
-        test_american_vs_european()
+# ─── Main ─────────────────────────────────────────────────────────────────────
 
-        # Plot: early exercise premium
+def main():
+    """Run all American option tests."""
+    print("\n" * 2 + "#" * 90)
+    print("# AMERICAN OPTION PRICING TEST SUITE  (Longstaff-Schwartz)")
+    print("#" * 90)
+
+    try:
+        test_american_ls_accuracy()
+        test_american_ls_vs_trinomial()
+        test_american_convergence()
+        test_american_steps_impact()
+        test_american_vs_european()
+        plot_antithetic_comparison()
         plot_am_vs_eu()
 
-        print("\n" + "=" * 80)
+        print("\n" + "=" * 90)
         print("ALL TESTS COMPLETED SUCCESSFULLY")
-        print("=" * 80 + "\n")
-        
+        print("=" * 90 + "\n")
+
     except Exception as e:
         print(f"\n❌ ERROR: {e}")
         import traceback
@@ -468,3 +358,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
