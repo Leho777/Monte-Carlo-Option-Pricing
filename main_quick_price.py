@@ -19,20 +19,20 @@ from greeks import MCGreeks
 #  PARAMÈTRES  ← modifier ici
 # ══════════════════════════════════════════════════════════════════════════════
 
-PRICING_DATE = date(2026, 3, 1)
-MATURITY     = date(2026, 12, 25)
+PRICING_DATE = date(2026, 2, 26)
+MATURITY     = date(2027, 4, 26)
 
 UNDERLYING   = 100    # S₀
-STRIKE       = 100.00    # K
-VOL          = 0.2      # σ  (ex : 0.25 = 25 %)
-RATE         = 0.05      # r  (ex : 0.04 = 4 %)
+STRIKE       = 90    # K
+VOL          = 0.25      # σ  (ex : 0.25 = 25 %)
+RATE         = 0.04      # r  (ex : 0.04 = 4 %)
 
 # Dividende discret  (mettre DIV_AMOUNT = 0 ou EX_DIV_DATE = None si absent)
 DIV_AMOUNT   = 3.0
-EX_DIV_DATE  = date(2026, 10, 30)   # None si pas de dividende
+EX_DIV_DATE  = date(2026, 6, 21)   # None si pas de dividende
 
 CALL_PUT     = 'PUT'        # 'CALL' ou 'PUT'
-EXERCISE     = 'EUROPEAN'    # 'EUROPEAN' ou 'AMERICAN'
+EXERCISE     = 'AMERICAN'    # 'EUROPEAN' ou 'AMERICAN'
 
 # Monte Carlo
 MC_PATHS      = 100_000
@@ -41,7 +41,7 @@ MC_ANTITHETIC = True
 MC_SEED       = 2
 
 # Variance du prix — répétitions indépendantes
-N_RUNS        = 30             # nombre de runs avec seeds différentes
+N_RUNS        = 10           # nombre de runs avec seeds différentes
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  CALCUL
