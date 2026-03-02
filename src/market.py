@@ -5,5 +5,5 @@ class Market:
         self.underlying = underlying
         self.vol = vol
         self.rate = rate
-        self.div_a = div_a #dividend amount 
+        self.div_a = div_a      # dividend amount 
         self.ex_div_date = ex_div_date

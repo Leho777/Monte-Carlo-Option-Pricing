@@ -24,13 +24,13 @@ def tree_pricing(market: Market, option: OptionTrade, pricing_date: date, n_step
     end = time.time()
     print("Backward induction time:", end - start, "seconds")
 
-    #tree.plot_tree()
+    # tree.plot_tree()
     # Greeks
 
     print("Delta =", mod.delta(option))
     print("Gamma =", mod.gamma(option))
     print("Delta hedge", 1000*mod.delta(option))
-    if n_steps <= 950: #car utilise price recursive qui est limité à 950 
+    if n_steps <= 950:
         
         print("Vega  =", mod.vega(option))
         print("Vomma =", mod.vomma(option))

@@ -3,20 +3,20 @@ from .market import Market
 from .node import Node
 from datetime import date
 import numpy as np  
-import plotly.graph_objects as go #for visualization
+import plotly.graph_objects as go # for visualization
 
 class Tree:
     def __init__(self, nb_step: int, market: Market, option: OptionTrade, pricing_date: date, prunning_threshold: float = 1e-8) -> None:
         """Trinomial tree for option pricing"""
-        self.nb_step = nb_step #number of time steps, related to the depth of the tree and so the precision of the pricing
-        self.delta_t = (option.mat_date - pricing_date).days / 365 / nb_step #time step size in years
+        self.nb_step = nb_step # number of time steps, related to the depth of the tree and so the precision of the pricing
+        self.delta_t = (option.mat_date - pricing_date).days / 365 / nb_step # time step size in years
         self.market = market
         self.option = option
         self.alpha = np.exp(market.vol * np.sqrt(3*self.delta_t))  # up/down factor bewteen next/mid and mid/down nodes
-        self.root = Node(market.underlying) #creation of the root node with the current underlying price
+        self.root = Node(market.underlying) # creation of the root node with the current underlying price
         self.root.p = 1  # initial probability at root
         self.pricing_date = pricing_date
-        self.prunning_threshold = prunning_threshold #threshold for pruning nodes with low probability
+        self.prunning_threshold = prunning_threshold # threshold for pruning nodes with low probability
 
     def _place_dividend(self) -> int | None:
         """Return the step where the dividend is paid, None if no dividend"""
@@ -30,7 +30,7 @@ class Tree:
     
     def _calculate_proba(self, node: Node, div_t: float) -> None:
             """Calculate transition probabilities for a given node"""
-            esp_next_node = node.underlying_i * np.exp(self.market.rate * self.delta_t) - div_t #div_t is the dividend at this step
+            esp_next_node = node.underlying_i * np.exp(self.market.rate * self.delta_t) - div_t # div_t is the dividend at this step
             var_next_node = node.underlying_i**2 * np.exp(2*self.market.rate*self.delta_t) * (np.exp(self.market.vol**2 * self.delta_t) -1)
             node.p_down = (
                 (node.next_mid_node.underlying_i**-2 * (var_next_node + esp_next_node**2) - 1 - (self.alpha + 1) * (node.next_mid_node.underlying_i**-1 * esp_next_node -1))
@@ -39,7 +39,7 @@ class Tree:
             node.p_up = ((esp_next_node/node.next_mid_node.underlying_i -1) + (1 - 1/self.alpha) * node.p_down) / (self.alpha - 1) 
             node.p_mid = 1 - node.p_up - node.p_down
             
-            #update the probabilities of next nodes
+            # update the probabilities of next nodes
             node.next_up_node.p += node.p * node.p_up
             node.next_mid_node.p += node.p * node.p_mid
             node.next_down_node.p += node.p * node.p_down
@@ -50,7 +50,7 @@ class Tree:
             """Build the next level of the tree from the current trunk node i.e up/down nodes"""
             current_node = current_trunk_node
             current_node_up_node_next_mid_candidate = current_node.next_up_node
-            while current_node.up_node is not None: #Moove Up, create the upper part of the level
+            while current_node.up_node is not None: # Moove Up, create the upper part of the level
                 
                 current_node_up_node_next_mid_candidate.up_node = Node(current_node_up_node_next_mid_candidate.underlying_i *self.alpha)
                 current_node_up_node_next_mid_candidate.up_node.down_node = current_node_up_node_next_mid_candidate
@@ -65,7 +65,7 @@ class Tree:
                     current_node.up_node.next_down_node = current_node_up_node_next_mid_candidate.down_node
 
                     if (self.prunning_threshold is not None) and (current_node.up_node.p < self.prunning_threshold and current_node.up_node.up_node is None):
-                        #Monomial if the probability is too low and no up child
+                        # Monomial if the probability is too low and no up child
                         current_node.up_node.p_mid = 1.0
                         current_node.next_mid_node.p += current_node.up_node.p
                         current_node.up_node.next_up_node = None
@@ -82,7 +82,7 @@ class Tree:
             current_node = current_trunk_node
             current_node_down_node_next_mid_candidate = current_node.next_down_node
 
-            while current_node.down_node is not None: #Moove Down, create the lower part of the level
+            while current_node.down_node is not None: # Moove Down, create the lower part of the level
 
                 current_node_down_node_next_mid_candidate.down_node = Node(current_node_down_node_next_mid_candidate.underlying_i / self.alpha)
                 current_node_down_node_next_mid_candidate.down_node.up_node = current_node_down_node_next_mid_candidate
@@ -97,7 +97,7 @@ class Tree:
                     current_node.down_node.next_down_node = current_node_down_node_next_mid_candidate.down_node
                     
                     if (self.prunning_threshold is not None) and (current_node.down_node.p < self.prunning_threshold and current_node.down_node.down_node is None):
-                        #Monomial if the probability is too low and no down child
+                        # Monomial if the probability is too low and no down child
                         current_node.down_node.p_mid = 1.0
                         current_node.next_mid_node.p += current_node.down_node.p
                         current_node.down_node.next_up_node = None
@@ -117,12 +117,12 @@ class Tree:
         div_step = self._place_dividend()
         for i in range(self.nb_step):
             div_t = self.market.div_a if div_step is not None and i == div_step else 0
-            #instantiate next nodes of the current trunk node
+            # instantiate next nodes of the current trunk node
             current_trunk_node.next_mid_node = Node(current_trunk_node.underlying_i * np.exp(self.market.rate * self.delta_t) - div_t)
             current_trunk_node.next_up_node = Node(current_trunk_node.next_mid_node.underlying_i * self.alpha)
             current_trunk_node.next_down_node = Node(current_trunk_node.next_mid_node.underlying_i / self.alpha)
             self._calculate_proba(current_trunk_node, div_t)
-            #create the links between up/down nodes
+            # create the links between up/down nodes
             current_trunk_node.next_mid_node.up_node = current_trunk_node.next_up_node
             current_trunk_node.next_mid_node.up_node.down_node = current_trunk_node.next_mid_node
 
@@ -130,7 +130,7 @@ class Tree:
             current_trunk_node.next_mid_node.down_node.up_node = current_trunk_node.next_mid_node
 
             self._build_next_level(current_trunk_node, div_t)
-            #advance to the next trunk node
+            # advance to the next trunk node
             current_trunk_node = current_trunk_node.next_mid_node
 
     def price_backward_induction(self) -> float:
@@ -140,7 +140,7 @@ class Tree:
         """
         df = np.exp(-self.market.rate * self.delta_t)
 
-        #collect all nodes level by level
+        # collect all nodes level by level
         levels = []
         current_level = [self.root]
         for _ in range(self.nb_step + 1):
@@ -152,11 +152,11 @@ class Tree:
                         next_level.append(child)
             current_level = next_level
 
-        #final nodes payoffs
+        # final nodes payoffs
         for node in levels[-1]:
             node.option_value = self.option.pay_off(node.underlying_i)
 
-        #backward induction
+        # backward induction
         for level in reversed(levels[:-1]):
             for node in level:
                 continuation = df * (
@@ -202,7 +202,7 @@ class Tree:
         all_prices = [n.underlying_i for level in levels for n in level]
         min_p, max_p = min(all_prices), max(all_prices)
 
-        # pour chaque niveau
+        # for each level
         for i, level_nodes in enumerate(levels):
             for node in sorted(level_nodes, key=lambda n: n.underlying_i, reverse=True):
                 x, y = i, node.underlying_i

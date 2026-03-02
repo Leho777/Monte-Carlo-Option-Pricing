@@ -9,7 +9,7 @@ class OptionTrade:
     def __init__(self, mat: date, call_put: str, ex: str, k: float) -> None:
         """Option trade parameters"""
         self.mat_date: date = mat
-        #upper to avoid case issues
+        # upper to avoid case issues
         self.opt_type: str = call_put.upper() 
         self.exercise: str = ex.upper()
         self.strike: float = k
@@ -31,7 +31,7 @@ class OptionTrade:
             return max(spot_price - self.strike, 0.0)
         elif self.is_a_put():
             return max(self.strike - spot_price, 0.0)
-        #one touch binary call
+        # one touch binary call
         elif self.is_binary(): 
             if spot_price >= self.strike:
                 return 1

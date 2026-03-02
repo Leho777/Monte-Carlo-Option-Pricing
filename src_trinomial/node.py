@@ -2,7 +2,7 @@ from .option_trade import OptionTrade
 class Node:
     def __init__(self, underlying_i: float) -> None:
         """A node in the trinomial tree"""
-        #node price
+        # node price
         self.underlying_i = underlying_i 
         self.next_mid_node = None
         self.next_up_node = None 
@@ -21,7 +21,7 @@ class Node:
 
     def priceRecursive(self, option: OptionTrade, df: float) -> float:
         """Recursive pricing of the option at this node"""
-        #if price already computed, return it
+        # if price already computed, return it
         if self.option_value is not None:
             return self.option_value
         
