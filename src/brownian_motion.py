@@ -3,18 +3,18 @@ import numpy as np
 
 class BrownianMotion:
     """
-    Génère des mouvements Browniens pour la simulation Monte Carlo.
+    Generates Brownian motions for Monte Carlo simulation.
 
-    Utilise np.random.default_rng (objet Generator) pour la reproductibilité
-    sans effet de bord sur l'état global du générateur NumPy.
+    Uses np.random.default_rng (Generator object) for reproducibility
+    without side effects on NumPy’s global random state.
 
-    Supporte les dividendes discrets via les paramètres div/jdiv de generate_paths
-    (formule cours 5-Feb) :
-        j < jdiv  : GBM standard
-        j = jdiv  : GBM + soustraction du dividende (saut ex-div)
-        j > jdiv  : GBM depuis S(jdiv) après la baisse
+    Supports discrete dividends via the div/jdiv parameters of generate_paths
+    (lecture formula 5-Feb):
+        j < jdiv  : standard GBM
+        j = jdiv  : GBM + dividend subtraction (ex-div jump)
+        j > jdiv  : GBM starting from S(jdiv) after the drop
 
-    Formule Black-Scholes (GBM) :
+    Black-Scholes (GBM) formula:
         S(t+dt) = S(t) * exp((r - q - 0.5*σ²)*dt + σ*dW),  dW ~ N(0, dt)
     """
 
@@ -23,32 +23,32 @@ class BrownianMotion:
         """
         Parameters
         ----------
-        num_paths  : nombre de paths Monte Carlo
-        num_steps  : nombre de pas de temps entre 0 et T
-        T          : maturité en années
-        antithetic : si True, génère les paths antithétiques (-dW)
-        seed       : graine pour np.random.default_rng (int, SeedSequence, …)
+        num_paths  : number of Monte Carlo paths
+        num_steps  : number of time steps between 0 and T
+        T          : maturity in years
+        antithetic : if True, generates antithetic paths (-dW)
+        seed       : seed for np.random.default_rng (int, SeedSequence, …)
         """
         self.num_paths = num_paths
         self.num_steps = num_steps
         self.T = T
         self.antithetic = antithetic
         self.dt = T / num_steps if num_steps > 0 else T
-        # Objet Generator : état local, pas d'effet de bord sur np.random global
+        # Generator object: local state, no side effects on global np.random
         self._rng = np.random.default_rng(seed)
 
     # ------------------------------------------------------------------
-    # Génération des incréments Browniens
+    # Generation of Brownian increments
     # ------------------------------------------------------------------
 
     def generate_increments_scalar(self) -> tuple:
         """
-        Génère UN incrément dW ~ N(0, dt) via le Generator.
+        Generates ONE increment dW ~ N(0, dt) using the Generator.
 
         Returns
         -------
-        dW      : float, incrément principal
-        dW_anti : float (-dW) si antithetic=True, sinon None
+        dW      : float, main increment
+        dW_anti : float (-dW) if antithetic=True, otherwise None
         """
         Z = self._rng.standard_normal()
         dW = Z * np.sqrt(self.dt)
@@ -56,35 +56,35 @@ class BrownianMotion:
 
     def generate_increments_vectorized(self) -> np.ndarray:
         """
-        Génère la matrice complète des incréments : shape (num_paths, num_steps).
+        Generates the full matrix of increments: shape (num_paths, num_steps).
         """
         return self._rng.standard_normal((self.num_paths, self.num_steps)) * np.sqrt(self.dt)
 
     # ------------------------------------------------------------------
-    # Génération des paths de prix (GBM + dividende discret optionnel)
+    # Generation of price paths (GBM + optional discrete dividend)
     # ------------------------------------------------------------------
 
     def generate_paths(self, S0: float, r: float, sigma: float,
                        q: float = 0.0,
                        div: float = 0.0, jdiv: int = None) -> tuple:
         """
-        Paths complets S(t) pour tous les pas de temps.
+        Full S(t) paths for all time steps.
 
-        Dividende discret (formule cours 5-Feb) :
+        Discrete dividend (lecture formula 5-Feb):
           j < jdiv  : S(j*dt) = S((j-1)*dt) * exp(drift*dt + σ*dW)
-          j = jdiv  : idem, PUIS S(jdiv*dt) -= div  (saut ex-dividende)
-          j > jdiv  : GBM depuis S(jdiv) après la baisse
+          j = jdiv  : same, THEN S(jdiv*dt) -= div  (ex-dividend jump)
+          j > jdiv  : GBM starting from S(jdiv) after the drop
 
         Parameters
         ----------
-        S0, r, sigma, q : paramètres Black-Scholes habituels
-        div  : montant absolu du dividende discret (0 = pas de dividende)
-        jdiv : index du step ex-div (1-basé, 1 ≤ jdiv ≤ num_steps, None = absent)
+        S0, r, sigma, q : standard Black-Scholes parameters
+        div  : absolute discrete dividend amount (0 = no dividend)
+        jdiv : ex-div step index (1-based, 1 ≤ jdiv ≤ num_steps, None = absent)
 
         Returns
         -------
         S_paths      : ndarray (num_paths, num_steps+1)
-        S_paths_anti : ndarray (num_paths, num_steps+1) ou None
+        S_paths_anti : ndarray (num_paths, num_steps+1) or None
         """
         dW = self.generate_increments_vectorized()
         drift = (r - q - 0.5 * sigma ** 2) * self.dt
@@ -111,15 +111,15 @@ class BrownianMotion:
     def generate_terminal_prices(self, S0: float, r: float, sigma: float,
                                  q: float = 0.0) -> tuple:
         """
-        Génère uniquement S(T) en un seul saut (pricing européen sans dividende discret).
+        Generates only S(T) in a single step (European pricing without discrete dividend).
 
-        Note : pour les options avec dividende discret, utiliser generate_paths
-               avec suffisamment de steps pour capturer le saut ex-div.
+        Note: for options with discrete dividends, use generate_paths
+              with enough steps to capture the ex-div jump.
 
         Returns
         -------
         S_T      : ndarray (num_paths,)
-        S_T_anti : ndarray (num_paths,) ou None
+        S_T_anti : ndarray (num_paths,) or None
         """
         Z = self._rng.standard_normal(self.num_paths)
         W_T = Z * np.sqrt(self.T)

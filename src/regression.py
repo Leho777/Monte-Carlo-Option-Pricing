@@ -4,37 +4,37 @@ import numpy as np
 
 class BasisType(str, Enum):
     """
-    Bases polynomiales disponibles pour la régression Longstaff-Schwartz.
+    Polynomial bases available for Longstaff-Schwartz regression.
 
-    Toutes engendrent le même espace polynomial (mathématiquement équivalentes),
-    mais les bases orthogonales offrent une meilleure stabilité numérique
-    que la base monomiale standard (POWER).
+    All generate the same polynomial space (mathematically equivalent),
+    but orthogonal bases provide better numerical stability
+    than the standard monomial basis (POWER).
     """
-    POWER     = 'power'     # Monômes standard : 1, x, x², x³, …
-    LAGUERRE  = 'laguerre'  # exp(-x/2) * L_k(x)  (base de l'article L&S)
-    HERMITE   = 'hermite'   # Polynômes d'Hermite probabilistes (Hermite)
-    LEGENDRE  = 'legendre'  # Polynômes de Legendre
-    CHEBYSHEV = 'chebyshev' # Polynômes de Chebyshev de type 1
+    POWER     = 'power'     # Standard monomials: 1, x, x², x³, …
+    LAGUERRE  = 'laguerre'  # exp(-x/2) * L_k(x)  (L&S paper basis)
+    HERMITE   = 'hermite'   # Probabilistic Hermite polynomials (Hermite)
+    LEGENDRE  = 'legendre'  # Legendre polynomials
+    CHEBYSHEV = 'chebyshev' # Chebyshev polynomials of the first kind
 
 
 class Regression:
     """
-    Régression polynomiale pour Longstaff-Schwartz.
+    Polynomial regression for Longstaff-Schwartz.
 
-    Améliorations vs régression naïve (np.polyfit) :
-    - Choix de la base polynomiale (BasisType) via matrice de design explicite
-    - Normalisation automatique des inputs (essentielle pour LAGUERRE/HERMITE)
-    - Résolution par np.linalg.lstsq (robuste aux cas singuliers)
-    - Calcul de l'écart-type résiduel après fit
-    - Seuil d'exercice : exercer seulement si IV > reg + threshold * std_résidu
+    Improvements vs naive regression (np.polyfit):
+    - Choice of polynomial basis (BasisType) via explicit design matrix
+    - Automatic input normalization (essential for LAGUERRE/HERMITE)
+    - Solution via np.linalg.lstsq (robust to singular cases)
+    - Residual standard deviation computed after fit
+    - Exercise threshold: exercise only if IV > reg + threshold * residual_std
 
-    Normalisation :
-    - LAGUERRE  : X_norm = X / mean(X)         â†’ valeurs autour de 1 (domaine â‰¥ 0)
-    - Autres    : X_norm = (X - mean) / std     â†’ z-score, valeurs autour de 0
+    Normalization:
+    - LAGUERRE  : X_norm = X / mean(X)         → values around 1 (domain ≥ 0)
+    - Others    : X_norm = (X - mean) / std     → z-score, values around 0
 
-    Toutes les bases Ã©tant des polynÃ´mes, la solution des moindres carrÃ©s est
-    unique et identique quelle que soit la base (cf. cours 1/7/2026 slide 4).
-    La base affecte uniquement le conditionnement numÃ©rique du systÃ¨me.
+    Since all bases are polynomials, the least-squares solution is
+    unique and identical regardless of the basis (cf. lecture 1/7/2026 slide 4).
+    The basis only affects the numerical conditioning of the system.
     """
 
     def __init__(self, degree: int = 1,
@@ -44,14 +44,14 @@ class Regression:
         """
         Parameters
         ----------
-        degree             : degré du polynôme (2 = quadratique comme dans L&S,
-                             3 = cubique par défaut)
-        basis              : base polynomiale (voir BasisType)
-        residual_threshold : fraction de l'écart-type résiduel ajoutée au seuil
-                             0.0 → comportement LS standard
-                             0.1 → exercer si IV > reg + 0.1 * std_résidu
-        normalize          : si True (défaut), normalise les inputs avant de
-                             construire la matrice de design
+        degree             : polynomial degree (2 = quadratic as in L&S,
+                             3 = cubic by default)
+        basis              : polynomial basis (see BasisType)
+        residual_threshold : fraction of residual standard deviation added to the threshold
+                             0.0 → standard LS behavior
+                             0.1 → exercise if IV > reg + 0.1 * residual_std
+        normalize          : if True (default), normalizes inputs before
+                             building the design matrix
         """
         self.degree = degree
         self.basis = BasisType(basis)
@@ -59,44 +59,44 @@ class Regression:
         self.normalize = normalize
         self._coeffs: np.ndarray = None
         self._residual_std: float = 0.0
-        # Paramètres de normalisation, appris dans fit()
+        # Normalization parameters, learned in fit()
         self._x_loc: float = 0.0
         self._x_scale: float = 1.0
 
     # ------------------------------------------------------------------
-    # Normalisation des inputs
+    # Input normalization
     # ------------------------------------------------------------------
 
     def _fit_normalization(self, X: np.ndarray) -> None:
-        """Calcule et stocke les paramètres de normalisation sur les données d'entraînement."""
+        """Computes and stores normalization parameters on training data."""
         if not self.normalize:
             self._x_loc, self._x_scale = 0.0, 1.0
             return
         mean = float(np.mean(X))
         if self.basis == BasisType.LAGUERRE:
-            # Domaine doit rester positif : X_norm = X / mean â†’ moyenne = 1
+            # Domain must remain positive: X_norm = X / mean → mean = 1
             self._x_loc = 0.0
             self._x_scale = mean if mean > 0 else 1.0
         else:
-            # Z-score standard
+            # Standard z-score
             self._x_loc = mean
             std = float(np.std(X))
             self._x_scale = std if std > 0 else 1.0
 
     def _normalize_x(self, X: np.ndarray) -> np.ndarray:
-        """Applique la normalisation apprise lors du fit."""
+        """Applies the normalization learned during fit."""
         return (X - self._x_loc) / self._x_scale
 
     # ------------------------------------------------------------------
-    # Matrice de design (base polynomiale)
+    # Design matrix (polynomial basis)
     # ------------------------------------------------------------------
 
     def _design_matrix(self, X: np.ndarray) -> np.ndarray:
         """
-        Construit la matrice Phi de shape (n, degree+1) dans la base choisie.
-        Les inputs sont normalisés avant évaluation des polynômes.
+        Builds the Phi matrix of shape (n, degree+1) in the chosen basis.
+        Inputs are normalized before polynomial evaluation.
 
-        Phi[i, k] = k-ième fonction de base évaluée en X_norm[i].
+        Phi[i, k] = k-th basis function evaluated at X_norm[i].
         """
         X_n = self._normalize_x(X)
         d   = self.degree + 1
@@ -106,8 +106,8 @@ class Regression:
             return np.column_stack([X_n ** k for k in range(d)])
 
         elif self.basis == BasisType.LAGUERRE:
-            # Article L&S : Ï†_k(x) = exp(-x/2) * L_k(x)
-            # Avec X_n â‰ˆ 1 pour ATM, exp(-0.5) â‰ˆ 0.6 â†’ pas de dÃ©crochage
+            # L&S paper: φ_k(x) = exp(-x/2) * L_k(x)
+            # With X_n ≈ 1 for ATM, exp(-0.5) ≈ 0.6 → no blow-up
             w = np.exp(-X_n / 2)
             return np.column_stack([
                 w * np.polynomial.laguerre.lagval(X_n, eye[k]) for k in range(d)
@@ -128,7 +128,7 @@ class Regression:
                 np.polynomial.chebyshev.chebval(X_n, eye[k]) for k in range(d)
             ])
 
-        raise ValueError(f"Base polynomiale inconnue : {self.basis}")
+        raise ValueError(f"Unknown polynomial basis: {self.basis}")
 
     # ------------------------------------------------------------------
     # Fit / Predict
@@ -136,8 +136,8 @@ class Regression:
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> "Regression":
         """
-        Régession moindres-carrés dans la base choisie.
-        Apprend la normalisation sur X avant de résoudre le système.
+        Least-squares regression in the chosen basis.
+        Learns normalization on X before solving the system.
         """
         self._fit_normalization(X)
         Phi = self._design_matrix(X)
@@ -147,15 +147,15 @@ class Regression:
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         """
-        Prédit E[continuation | S_t] dans la base choisie, clampé à 0.
-        Utilise la normalisation apprise lors du dernier fit().
+        Predicts E[continuation | S_t] in the chosen basis, clamped to 0.
+        Uses normalization learned during the last fit().
         """
         if self._coeffs is None:
-            raise ValueError("Appeler fit() avant predict().")
+            raise ValueError("Call fit() before predict().")
         return np.maximum(self._design_matrix(X) @ self._coeffs, 0.0)
 
     # ------------------------------------------------------------------
-    # Décision d'exercice (Longstaff-Schwartz)
+    # Exercise decision (Longstaff-Schwartz)
     # ------------------------------------------------------------------
 
     def exercise_decision(self,
@@ -163,16 +163,16 @@ class Regression:
                           intrinsic: np.ndarray,
                           continuation_discounted: np.ndarray) -> np.ndarray:
         """
-        Décision d'exercice optimal à un pas de temps.
+        Optimal exercise decision at one time step.
 
-        Condition d'exercice avec seuil (cf. cours 1/7/2026 forward price example) :
-            Exercer si IV(S) > E[continuation | S] + residual_threshold * std_résidu
+        Exercise condition with threshold (cf. lecture 1/7/2026 forward price example):
+            Exercise if IV(S) > E[continuation | S] + residual_threshold * residual_std
 
         Parameters
         ----------
-        S_at_step             : prix du sous-jacent à ce step, shape (num_paths,)
-        intrinsic             : valeur intrinsèque, shape (num_paths,)
-        continuation_discounted : cash flow futur discounté d'un step, shape (num_paths,)
+        S_at_step               : underlying price at this step, shape (num_paths,)
+        intrinsic               : intrinsic value, shape (num_paths,)
+        continuation_discounted : future cash flow discounted by one step, shape (num_paths,)
         """
         itm_mask = intrinsic > 0
         n_itm = int(np.sum(itm_mask))
