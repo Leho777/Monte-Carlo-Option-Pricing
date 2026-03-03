@@ -38,12 +38,10 @@ class TrinomialModel:
     def delta(self, option: OptionTrade) -> float:
         """∂V/∂S Local delta from the first step (no reprice)."""
         root = self._ensure_first_step_priced(option)
-        Su, Sm, Sd = (root.next_up_node.underlying_i,
-                      root.next_mid_node.underlying_i,
-                      root.next_down_node.underlying_i)
-        Vu, Vm, Vd = (root.next_up_node.option_value,
-                      root.next_mid_node.option_value,
-                      root.next_down_node.option_value)
+        Su = root.next_up_node.underlying_i
+        Sd = root.next_down_node.underlying_i
+        Vu = root.next_up_node.option_value
+        Vd = root.next_down_node.option_value
         return (Vu - Vd) / (Su - Sd)
 
     def gamma(self, option: OptionTrade) -> float:
@@ -76,14 +74,16 @@ class TrinomialModel:
 
     def vega(self, option: OptionTrade, h_abs: float = 1e-4) -> float:
         """∂V/∂σ using a short central diff (2 reprices total)."""
-        s0 = self.tree.market.vol; h = max(1e-8, h_abs)
+        s0 = self.tree.market.vol
+        h = max(1e-8, h_abs)
         up = self._reprice(option, sigma=s0 + h)
         dn = self._reprice(option, sigma=s0 - h)
         return (up - dn) / (2.0 * h) / 100      # divided by 100 to get per 1% vol
 
     def vomma(self, option: OptionTrade, h_abs: float = 1e-4) -> float:
         """∂²V/∂σ² using the same evaluations (price0 is already known)."""
-        s0 = self.tree.market.vol; h = max(1e-8, h_abs)
+        s0 = self.tree.market.vol
+        h = max(1e-8, h_abs)
         up = self._reprice(option, sigma=s0 + h)
         mi = self._reprice(option, sigma=s0)
         dn = self._reprice(option, sigma=s0 - h)
