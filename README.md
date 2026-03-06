@@ -266,4 +266,5 @@ pip install -r requirements.txt
 ---
 
 **Author:** VERDELHAN Théo & RENAULT Léo
+
 **Institution:** Paris Dauphine University — Master 2 Financial Engineering — Major in Quantitative Finance
