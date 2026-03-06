@@ -179,6 +179,10 @@ st.markdown(
 # Matplotlib dark style helper
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Shared kwargs for all ax.legend() calls
+LEGEND_KW = dict(facecolor=NAVY2, edgecolor="#1E3A5F", labelcolor=WHITE)
+
+
 def _apply_dark_style(fig: plt.Figure):
     """Apply consistent dark theme to a matplotlib figure."""
     fig.patch.set_facecolor(NAVY)
@@ -190,11 +194,12 @@ def _apply_dark_style(fig: plt.Figure):
         a.title.set_color(WHITE)
         for spine in a.spines.values():
             spine.set_edgecolor("#1E3A5F")
-        a.legend(
-            facecolor=NAVY2,
-            edgecolor="#1E3A5F",
-            labelcolor=WHITE,
-        ) if a.get_legend() else None
+        leg = a.get_legend()
+        if leg is not None:
+            leg.get_frame().set_facecolor(NAVY2)
+            leg.get_frame().set_edgecolor("#1E3A5F")
+            for text in leg.get_texts():
+                text.set_color(WHITE)
     return fig
 
 
@@ -531,7 +536,7 @@ with tab_price:
         ax.set_xlabel("Spot at maturity")
         ax.set_ylabel("Payoff")
         ax.set_title(f"{cp} {ex} – K={K:.0f}, T={T_months}M")
-        ax.legend()
+        ax.legend(**LEGEND_KW)
         _apply_dark_style(fig)
         st.pyplot(fig, use_container_width=True)
         plt.close(fig)
@@ -562,7 +567,7 @@ with tab_paths:
     ax.set_xlabel("Time (years)")
     ax.set_ylabel("Stock price")
     ax.set_title(f"{n_show} Monte Carlo paths  (σ={sigma:.0%}, r={r:.1%})")
-    ax.legend()
+    ax.legend(**LEGEND_KW)
 
     # Right: terminal distribution
     ax2 = axes[1]
@@ -574,7 +579,7 @@ with tab_paths:
     ax2.set_xlabel("S_T — terminal spot")
     ax2.set_ylabel("Density")
     ax2.set_title("Terminal spot distribution")
-    ax2.legend()
+    ax2.legend(**LEGEND_KW)
 
     _apply_dark_style(fig)
     st.pyplot(fig, use_container_width=True)
@@ -746,7 +751,7 @@ with tab_conv:
         ax.set_xlabel("Number of paths N  (log scale)")
         ax.set_ylabel("Estimated price")
         ax.set_title(f"Price convergence — {cp} {ex}")
-        ax.legend()
+        ax.legend(**LEGEND_KW)
 
         # Right: std error × sqrt(N) should be flat
         ax2 = axes[1]
@@ -760,7 +765,7 @@ with tab_conv:
         ax2.set_xlabel("N  (log scale)")
         ax2.set_ylabel("Std Error  (log scale)")
         ax2.set_title("Standard error vs N")
-        ax2.legend()
+        ax2.legend(**LEGEND_KW)
 
         _apply_dark_style(fig)
         st.pyplot(fig, use_container_width=True)
@@ -816,7 +821,7 @@ with tab_smile:
         ax.set_xlabel("Strike  K")
         ax.set_ylabel("Option price")
         ax.set_title(f"{cp} {ex} price profile — S₀={S0:.0f}  T={T_months}M  σ=20%  r={r:.1%}")
-        ax.legend()
+        ax.legend(**LEGEND_KW)
         _apply_dark_style(fig)
         st.pyplot(fig, use_container_width=True)
         plt.close(fig)
